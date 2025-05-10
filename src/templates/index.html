@@ -1,0 +1,251 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Emote Usage Analysis</title>
+    <script src="https://cdn.plot.ly/plotly-latest.min.js"></script>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            margin: 0;
+            padding: 20px;
+            background-color: #f5f5f5;
+        }
+        .container {
+            max-width: 1200px;
+            margin: 0 auto;
+            background-color: white;
+            padding: 20px;
+            border-radius: 8px;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+        }
+        .search-container {
+            margin-bottom: 20px;
+            display: flex;
+            gap: 10px;
+            align-items: center;
+        }
+        #searchInput {
+            padding: 8px;
+            width: 300px;
+            border: 1px solid #ddd;
+            border-radius: 4px;
+            font-size: 16px;
+        }
+        .button {
+            padding: 8px 16px;
+            border: 1px solid #ddd;
+            border-radius: 4px;
+            background-color: #f8f8f8;
+            cursor: pointer;
+            font-size: 14px;
+            transition: background-color 0.2s;
+        }
+        .button:hover {
+            background-color: #e8e8e8;
+        }
+        #graph {
+            width: 100%;
+            height: 600px;
+        }
+        .loading {
+            text-align: center;
+            padding: 20px;
+            font-size: 18px;
+            color: #666;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div style="display:flex; justify-content: flex-end; margin-bottom: 8px;">
+            <button class="button" onclick="window.location.href='monthly.html'">Monthly View</button>
+        </div>
+        <h1>Emote Usage Analysis</h1>
+        <div class="search-container" style="display: flex; align-items: flex-start; gap: 24px;">
+            <div>
+                <label for="sortSelect"><b>Sort by:</b></label>
+                <select id="sortSelect" style="margin-left:8px; margin-bottom:10px;">
+                    <option value="alpha">Alphabetical</option>
+                    <option value="date">Date Added</option>
+                    <option value="rank">Usage Rank</option>
+                </select><br>
+                <label for="emoteSelect"><b>Select an emote:</b></label>
+                <select id="emoteSelect">
+                    <option value="">-- Choose an emote --</option>
+                </select>
+            </div>
+            <div id="statsBox" style="display:none; min-width:220px; background:#f8f8f8; border:1px solid #ddd; border-radius:6px; padding:16px; font-size:15px;">
+                <div><b>Total Usage:</b> <span id="statTotal">0</span></div>
+                <div><b>Added Date:</b> <span id="statAdded">N/A</span></div>
+                <div><b>Usage Rank:</b> <span id="statRank">N/A</span></div>
+            </div>
+        </div>
+        <div id="defaultMessage" class="loading">Select an emote to view usage.</div>
+        <div id="graph"></div>
+    </div>
+
+    <script>
+    let emoteData = null;
+    let allEmoteNames = [];
+    let currentTrace = null;
+    let currentLayout = null;
+    let usageTotals = null;
+    let usageRanks = null;
+    let emoteAdditions = null;
+    let currentSort = 'alpha';
+
+    // Helper to get sorted emote names
+    function getSortedEmoteNames(sortType) {
+        if (!emoteData) return [];
+        if (sortType === 'alpha') {
+            return Object.keys(emoteData).sort((a, b) => a.localeCompare(b));
+        } else if (sortType === 'date') {
+            return Object.keys(emoteData).sort((a, b) => {
+                const dateA = emoteAdditions[a] ? new Date(emoteAdditions[a]) : new Date(8640000000000000);
+                const dateB = emoteAdditions[b] ? new Date(emoteAdditions[b]) : new Date(8640000000000000);
+                return dateA - dateB;
+            });
+        } else if (sortType === 'rank') {
+            return Object.keys(emoteData).sort((a, b) => (usageTotals[b] || 0) - (usageTotals[a] || 0));
+        }
+        return Object.keys(emoteData);
+    }
+
+    // Repopulate dropdown with current sort
+    function populateDropdown(selectedEmote = null) {
+        const select = document.getElementById('emoteSelect');
+        const sortType = currentSort;
+        const sortedNames = getSortedEmoteNames(sortType);
+        select.innerHTML = '<option value="">-- Choose an emote --</option>';
+        sortedNames.forEach(emote => {
+            const option = document.createElement('option');
+            option.value = emote;
+            option.textContent = emote;
+            if (selectedEmote && emote === selectedEmote) option.selected = true;
+            select.appendChild(option);
+        });
+    }
+
+    // Fetch data and populate dropdown
+    fetch('/api/data')
+        .then(response => response.json())
+        .then(data => {
+            emoteData = data;
+            allEmoteNames = Object.keys(data).sort((a, b) => a.localeCompare(b));
+            // Compute total usage for each emote
+            usageTotals = {};
+            for (const [emote, usage] of Object.entries(data)) {
+                usageTotals[emote] = Array.isArray(usage.counts) ? usage.counts.reduce((a, b) => a + b, 0) : 0;
+            }
+            // Compute usage rank (descending)
+            const sorted = Object.entries(usageTotals).sort((a, b) => b[1] - a[1]);
+            usageRanks = {};
+            sorted.forEach(([emote], idx) => { usageRanks[emote] = idx + 1; });
+            // Get emote additions (first date in dates array)
+            emoteAdditions = {};
+            for (const [emote, usage] of Object.entries(data)) {
+                emoteAdditions[emote] = (Array.isArray(usage.dates) && usage.dates.length > 0) ? usage.dates[0] : null;
+            }
+            // Populate dropdown (default sort)
+            populateDropdown();
+        })
+        .catch(error => {
+            console.error('Error loading data:', error);
+            document.getElementById('defaultMessage').textContent = `Error loading data: ${error.message}`;
+        });
+
+    // Function to render the selected emote's graph and stats
+    function renderEmoteGraph(emote) {
+        const graphDiv = document.getElementById('graph');
+        const defaultMsg = document.getElementById('defaultMessage');
+        const statsBox = document.getElementById('statsBox');
+        if (!emote || !emoteData || !emoteData[emote]) {
+            graphDiv.innerHTML = '';
+            defaultMsg.style.display = '';
+            statsBox.style.display = 'none';
+            return;
+        }
+        defaultMsg.style.display = 'none';
+        statsBox.style.display = '';
+        // Update stats
+        document.getElementById('statTotal').textContent = usageTotals[emote] || 0;
+        document.getElementById('statAdded').textContent = emoteAdditions[emote] ? (new Date(emoteAdditions[emote])).toLocaleDateString() : 'N/A';
+        document.getElementById('statRank').textContent = usageRanks[emote] ? `#${usageRanks[emote]} of ${allEmoteNames.length}` : 'N/A';
+        // Render graph
+        const usage = emoteData[emote];
+        if (!Array.isArray(usage.dates) || !Array.isArray(usage.counts)) {
+            graphDiv.innerHTML = '<div class="loading">No data available for this emote.</div>';
+            return;
+        }
+        const dates = usage.dates.map(date => new Date(date));
+        const counts = usage.counts;
+        const trace = {
+            x: dates,
+            y: counts,
+            type: 'scatter',
+            mode: 'lines+markers',
+            name: emote,
+            marker: { size: 4, opacity: 0.7 },
+            line: { width: 1 },
+            customdata: Array(dates.length).fill(emote),
+            hovertemplate:
+                '<b>%{x|%Y-%m-%d}</b><br>' +
+                'Daily Uses: %{y}<br>' +
+                '<extra></extra>'
+        };
+        const layout = {
+            title: {
+                text: `Emote Usage Over Time: ${emote}`,
+                font: { size: 24 }
+            },
+            xaxis: {
+                title: 'Date',
+                type: 'date',
+                range: ['2021-05-01', '2025-05-31'],
+                tickformat: '%Y-%m',
+                dtick: 'M3',
+                tickangle: 45,
+                showgrid: true,
+                gridcolor: 'rgba(0,0,0,0.1)',
+                minor: {
+                    showgrid: true,
+                    gridcolor: 'rgba(0,0,0,0.05)',
+                    dtick: 'M1'
+                }
+            },
+            yaxis: {
+                title: 'Daily Usage Count',
+                rangemode: 'nonnegative',
+                showgrid: true,
+                gridcolor: 'rgba(0,0,0,0.1)'
+            },
+            showlegend: false,
+            margin: {
+                l: 50,
+                r: 50,
+                b: 80,
+                t: 50,
+                pad: 4
+            },
+            hovermode: 'closest',
+            plot_bgcolor: 'white',
+            paper_bgcolor: 'white'
+        };
+        Plotly.newPlot('graph', [trace], layout);
+    }
+
+    // Add event listener for dropdown
+    document.getElementById('emoteSelect').addEventListener('change', function(e) {
+        renderEmoteGraph(e.target.value);
+    });
+    // Add event listener for sort selector
+    document.getElementById('sortSelect').addEventListener('change', function(e) {
+        currentSort = e.target.value;
+        const selectedEmote = document.getElementById('emoteSelect').value;
+        populateDropdown(selectedEmote);
+    });
+    </script>
+</body>
+</html> 
